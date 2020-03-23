@@ -1,4 +1,6 @@
 import React, { useReducer, useRef, useEffect } from 'react';
+import produce from 'immer';
+import pick from 'lodash-es/pick';
 
 type Pixel = number;
 type Radian = number;
@@ -37,6 +39,7 @@ function RectLayer({ src, onDragStart, onDragEnd, onMove }: Props) {
 
 interface State {
   layers: Layer[];
+  initialTransforms: Record<Layer["id"], Transform>;
 }
 
 const initialState = {
@@ -49,24 +52,84 @@ const initialState = {
       positionY: 0,
       rotate: 0
     }
-  ]
+  ],
+  initialTransforms: {}
 };
 
 const layerMoved = () => ({ ... })
 
 const reducer = (
   currentState = initialState,
-  action: { type: string; payload: any }
+  action: KnownLayerActions
 ) => {
-  switch (action.type) {
-    case 'layer/moved': {
-      return ...
+  produce(currentState, state => {
+    switch (action.type) {
+      case 'layer/moveStarted': {
+        state.layers.forEach(layer => {
+          state.initialTransforms[layer.id] = pick(layer, [
+            'width',
+            'height',
+            'positionX',
+            'positionY',
+            'rotate'
+          ]);
+        });
+        break;
+      }
+      case 'layer/moved': {
+        const { dx, dy } = action.payload;
+
+        state.layers.forEach(layer => {
+          const transform = state.initialTransforms[layer.id];
+          if(!transform) {
+            return;
+          }
+
+          const { x, y } = transform;
+          layer.x = x + dx;
+          layer.y = y + dy;
+        });
+        break;
+      }
+      case 'layer/moveEnded': {
+        state.initialTransforms = {};
+        break;
+      }
     }
-  }
+  })
 }
 
 function Canvas() {
   const [state, dispatch] = useReducer(reducer, initialState);
+
+  const onDragStart = (_x: Pixel, _y: Pixel, e: Event) => {
+    const layerId = Number(e.currentTarget.dataset.layerId);
+
+    dispatch(LayerActions.moveStarted(layerId));
+  };
+
+  const onMove = (dx: number, dy: number) => {
+    dispatch(LayerActions.moved(dx, dy));
+  };
+
+  const onDragEnd = () => {
+    e.stopPropagation();
+    dispatch(LayerActions.dragEnded());
+  };
+
+  return (
+    <svg id="canvas" viewBox="0 0 500 500" width="500" height="500">
+      {state.layers.map(layer => (
+        <RectLayer
+          key={layer.id}
+          src={layer}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onMove={onMove}
+        />
+      ))}
+    </svg>
+  )
 }
 
 const ref = useRef<SVGRectElement | null>(null);
@@ -197,7 +260,12 @@ type KnownLayerActions = ReturnType<
 // reducer の網羅性検証を型安全に行うためのユーティリティ
 const unreduceable = (unknownAction: never) => void unknownAction
 
+type Transform = Pick<
+  Layer,
+  "width" | "height" | "positionX" | "positionY" | "rotate"
+>;
+
+
 export default RectLayer;
 
-
-// 41 ~
+// 2.5 拡大と縮小から（p:44）
