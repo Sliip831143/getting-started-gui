@@ -15,10 +15,67 @@ interface Layer {
 }
 
 interface Props {
+  parentSize: [Pixel, Pixel];
+  onDrag(x: Pixel, y: Pixel, e: Event): void;
+  onDragStart(): void;
+  onDragEnd(): void;
   src: Layer;
+  isSelected: boolean;
 }
 
-function RectLayer({ src, onDragStart, onDragEnd, onMove }: Props) {
+const HANDLE_SIZE = 10 as Pixel;
+
+/**
+ * 実際のリサイズハンドラよりもどのくらい当たり判定を大きくするか
+ */
+
+const TOLERANCE = 4 as Pixel;
+
+function ResizeHandler({
+  positionX,
+  positionY,
+  parentSize,
+  onDrag,
+  onDragStart,
+  onDragEnd
+}: Props) {
+  const ref = useDrag({
+    onMove,
+    onDragStart,
+    onDragEnd
+  });
+
+  const [width, height] = parentSize;
+  const x = width - HANDLE_SIZE / 2;
+  const y = height - HANDLE_SIZE / 2;
+
+  return (
+    <g>
+      <rect
+        fill="white"
+        stroke="#666666"
+        strokeWidth="1"
+        width={HANDLE_SIZE}
+        height={HANDLE_SIZE}
+        x={x}
+        y={y}
+      />
+
+      {/** 上に透明な当たり判定を大きめにかぶせる */}
+      <rect
+        ref={ref}
+        fillOpacity="0"
+        width={HANDLE_SIZE + TOLERANCE * 2}
+        height={HANDLE_SIZE + TOLERANCE * 2}
+        x={x - TOLERANCE}
+        y={y - TOLERANCE}
+        style={{ cursor: "pointer" }}
+      />
+    </g>
+  );
+}
+
+function RectLayer({ src, isSelected, onDragStart, onDragEnd, onMove }: Props) {
   const ref = useDrag("ontouchstart" in window, {
     onMove,
     onDragStart,
@@ -26,14 +83,24 @@ function RectLayer({ src, onDragStart, onDragEnd, onMove }: Props) {
   });
 
   return (
-    <rect
-      fill="orange"
+    <svg
+      viewBox={`0 0 ${src.width} ${src.height}`}
       width={src.width}
       height={src.height}
-      x={src.positionX}
-      y={src.positionY}
-      transform={`rotate(${src.rotate})`}
-    />
+    >
+      {/** レイヤー本体の rect */}
+      <rect
+        fill="orange"
+        width={src.width}
+        height={src.height}
+        x={src.positionX}
+        y={src.positionY}
+        transform={`rotate(${src.rotate})`}
+      />
+
+      {/** リサイズハンドラの白い四角形 */}
+      <ResizeHandler ... />
+    </svg>
   );
 }
 
@@ -95,8 +162,38 @@ const reducer = (
         state.initialTransforms = {};
         break;
       }
+      case 'layer/resized': {
+        const { dx, dy } = action.payload
+
+        state.layers.forEach(layer => {
+          const transform = state.initialTransforms[layer.id];
+          if(!transform) {
+            return;
+          }
+
+          const { width, height } = transform;
+          layer.width = x + dx;
+          layer.height = y + dy;
+        });
+
+        break;
+      }
+      case 'layer/rotated': {
+        const { id, nextTheta } = action.payload;
+        const layer = state.layers.find(layer => layer.id === id);
+
+        if(layer) {
+          layer.rotate = nextTheta;
+        }
+        break;
+      }
+
+      default: {
+        unreduceable(action);
+        break;
+      }
     }
-  })
+  });
 }
 
 function Canvas() {
@@ -245,10 +342,34 @@ function useDrag(isTouchDevice: boolean, handlers: Handlers) {
   return ref;
 }
 
+function RotateHandler({ onMove, onDragStart, onDragEnd }: Props) {
+  const ref = useDrag({
+    onMove,
+    onDragStart,
+    onDragEnd
+  });
+
+  const onMove = (_dx: Pixel, _dy: Pixel, x: Pixel, y: Pixel) => {
+    const [cx, cy] = props.parentCenter;
+
+    /** θ の隣辺の長さ（ x 方向） */
+    const vx = x - cx;
+
+    /** θ の対辺の長さ（ y 方向） */
+    const vy = y - cy;
+
+    /** θ：回転角（ラジアン） */
+    const nextTheta = Math.atan2(vy, vx);
+
+    dispatch(LayerActions.rotate(layer.id, nextTheta));
+  };
+}
+
 const LayerActions {
   moveStarted = (id: Layer['id']) => action('layer/moveStarted', { id }),
   moved = (dx: Pixel, dy: Pixel) => action('layer/moved', { dx, dy }),
   moveEnded = () => action('layer/moveEnded', {}),
+  resized = (dx: Pixel, dy: Pixel) => action('layer/resized', { dx, dy })
 }
 
 const action = <T extends string, P>(type: T, payload: P) => ({ type, payload })
